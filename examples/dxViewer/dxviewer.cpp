@@ -55,6 +55,36 @@
 #include <osd/d3d11VertexBuffer.h>
 #include <osd/d3d11ComputeEvaluator.h>
 
+#ifdef OPENSUBDIV_HAS_DX12
+#include <osd/d3d12commandqueuecontext.h>
+#include <osd/d3d12util.h>
+#include <d3d12.h>
+#include <dxgi1_4.h>
+#include <DXGIDebug.h>
+
+#include <osd/d3d12VertexBuffer.h>
+#include <osd/d3d12ComputeEvaluator.h>
+
+#include <osd/d3d12LegacyGregoryPatchTable.h>
+
+#include <memory>
+
+    GUID DXGI_DEBUG_ALL1 = { 0xe48ae283, 0xda80, 0x490b, 0x87, 0xe6, 0x43, 0xe9, 0xa9, 0xcf, 0xda, 0x8 };
+
+    struct D3D12CommandQueueContextDeleter {
+        void operator()(OpenSubdiv::Osd::D3D12CommandQueueContext *D3D12CommandQueueContext) {
+            OpenSubdiv::Osd::FreeD3D12CommandQueueContext(D3D12CommandQueueContext);
+
+            CComPtr<IDXGIDebug1> pDXGIDebug;
+            DXGIGetDebugInterface1(0, IID_PPV_ARGS(&pDXGIDebug));
+            pDXGIDebug->ReportLiveObjects(DXGI_DEBUG_ALL1, DXGI_DEBUG_RLO_ALL);
+        }
+    };
+
+    typedef std::unique_ptr<OpenSubdiv::Osd::D3D12CommandQueueContext, D3D12CommandQueueContextDeleter> D3D12CommandQueueContextUniquePtr;
+    D3D12CommandQueueContextUniquePtr g_D3D12CommandQueueContext;
+#endif
+
 #include <osd/d3d11Mesh.h>
 #include <osd/d3d11LegacyGregoryPatchTable.h>
 OpenSubdiv::Osd::D3D11MeshInterface *g_mesh = NULL;
@@ -89,7 +119,9 @@ enum KernelType { kCPU           = 0,
                   kTBB           = 2,
                   kCUDA          = 3,
                   kCL            = 4,
-                  kDirectCompute = 5 };
+                  kDirectCompute = 5,
+                  kDirect3D12    = 6,
+};
 
 enum DisplayStyle { kDisplayStyleWire = 0,
                     kDisplayStyleShaded,
@@ -257,6 +289,8 @@ getKernelName(int kernel) {
         return "OpenCL";
     else if (kernel == kDirectCompute)
         return "DirectCompute";
+    else if (kernel == kDirect3D12)
+        return "Direct3D12";
     return "Unknown";
 }
 
@@ -383,6 +417,23 @@ createOsdMesh(ShapeDesc const & shapeDesc, int level, int kernel, Scheme scheme=
                                    level, bits,
                                    &d3d11ComputeEvaluatorCache,
                                    g_pd3dDeviceContext);
+#ifdef OPENSUBDIV_HAS_DX12
+    }
+    else if (g_kernel == kDirect3D12) {
+        
+        static Osd::EvaluatorCacheT<Osd::D3D12ComputeEvaluator> d3d12ComputeEvaluatorCache;
+        g_mesh = new Osd::Mesh<Osd::D3D12VertexBuffer,
+            Osd::D3D12StencilTable,
+            Osd::D3D12ComputeEvaluator,
+            Osd::D3D11PatchTable,
+            Osd::D3D12CommandQueueContext>(
+                refiner,
+                numVertexElements,
+                numVaryingElements,
+                level, bits,
+                &d3d12ComputeEvaluatorCache,
+                g_D3D12CommandQueueContext.get());
+#endif
     } else {
         printf("Unsupported kernel %s\n", getKernelName(kernel));
     }
@@ -1047,6 +1098,45 @@ callbackKernel(int k) {
 
     g_kernel = k;
 
+#ifdef OPENSUBDIV_HAS_DX12
+    if (g_kernel == kDirect3D12 && (g_D3D12CommandQueueContext == nullptr)) {
+
+        static bool bUseDebugLayer = true;
+        if (bUseDebugLayer)
+        {
+            ID3D12Debug *pDebug;
+            D3D12GetDebugInterface(IID_PPV_ARGS(&pDebug));
+
+            pDebug->EnableDebugLayer();
+        }
+
+        IDXGIAdapter *pAdapter = nullptr;
+        static bool useWarp = false;
+        if (useWarp)
+        {
+            IDXGIFactory4 *pFactory;
+            CreateDXGIFactory1(IID_PPV_ARGS(&pFactory));
+
+            pFactory->EnumWarpAdapter(IID_PPV_ARGS(&pAdapter));
+        }
+
+        ID3D12Device *pDevice;
+        D3D12CreateDevice(pAdapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&pDevice));
+
+        D3D12_COMMAND_QUEUE_DESC commandQueueDesc = {};
+        ID3D12CommandQueue *pQueue;
+        commandQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+        commandQueueDesc.NodeMask = 0;
+        commandQueueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+        commandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+        pDevice->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(&pQueue));
+
+        g_D3D12CommandQueueContext = D3D12CommandQueueContextUniquePtr(OpenSubdiv::Osd::CreateD3D12CommandQueueContext(pQueue, 0, g_pd3dDeviceContext));
+
+        SAFE_RELEASE(pDevice);
+        SAFE_RELEASE(pQueue);
+    }
+#endif
 #ifdef OPENSUBDIV_HAS_OPENCL_DX_INTEROP
     if (g_kernel == kCL && (!g_clDeviceContext.IsInitialized())) {
         if (g_clDeviceContext.Initialize(g_pd3dDeviceContext) == false) {
@@ -1181,6 +1271,10 @@ initHUD() {
         g_hud->AddPullDownButton(compute_pulldown, "OpenCL", kCL);
     }
 #endif
+#ifdef OPENSUBDIV_HAS_DX12
+    g_hud->AddPullDownButton(compute_pulldown, "Direct3D12", kDirect3D12);
+#endif
+
     g_hud->AddPullDownButton(compute_pulldown, "HLSL Compute", kDirectCompute);
 
     int displaystyle_pulldown = g_hud->AddPullDown("DisplayStyle (W)", 200, 10, 250,
@@ -1305,7 +1399,7 @@ initD3D11(HWND hWnd) {
     for(UINT driverTypeIndex=0; driverTypeIndex < numDriverTypes; driverTypeIndex++){
         hDriverType = driverTypes[driverTypeIndex];
         hr = D3D11CreateDeviceAndSwapChain(NULL,
-                                           hDriverType, NULL, 0, NULL, 0,
+                                           hDriverType, NULL, D3D11_CREATE_DEVICE_DEBUG, NULL, 0,
                                            D3D11_SDK_VERSION, &hDXGISwapChainDesc,
                                            &g_pSwapChain, &g_pd3dDevice,
                                            &hFeatureLevel, &g_pd3dDeviceContext);

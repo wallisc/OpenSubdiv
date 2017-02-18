@@ -89,13 +89,19 @@ if (NOT NO_LIB)
         )
     endif()
 
-    if( DXSDK_FOUND )
+	if ( DX12SDK_FOUND )
+		include_directories( "${D3D12_INCLUDE_DIRS}" )
+        list(APPEND PLATFORM_GPU_LIBRARIES
+            ${D3D12_LIBRARIES}
+        )
+	elseif( DXSDK_FOUND )
         include_directories( "${DXSDK_INCLUDE_DIR}" )
         list(APPEND PLATFORM_GPU_LIBRARIES
             ${DXSDK_LIBRARIES}
         )
     endif()
 
+<<<<<<< HEAD
     if( METAL_FOUND )
         include_directories( "${METAL_INCLUDE_DIR}" )
         list(APPEND PLATFORM_GPU_LIBRARIES
@@ -103,6 +109,9 @@ if (NOT NO_LIB)
         )
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
     endif()
+=======
+
+>>>>>>> First Iteration of adding D3D12 backend to OpenSubdiv
 
     if ( OPENCL_FOUND )
         include_directories( "${OPENCL_INCLUDE_DIRS}" )

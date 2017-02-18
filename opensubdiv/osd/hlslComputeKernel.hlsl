@@ -29,12 +29,22 @@ cbuffer KernelUniformArgs : register( b0 ) {
     int dstOffset;
 };
 
-RWBuffer<float> vertexBuffer  : register( u0 );
-RWBuffer<float> dstVertexBuffer  : register( u1 );
-Buffer<int>    sizes   : register( t1 );
-Buffer<int>    offsets : register( t2 );
-Buffer<int>    indices : register( t3 );
-Buffer<float>  weights : register( t4 );
+#ifdef USE_STRUCTURED_BUFFERS
+typedef RWStructuredBuffer<float> RWBufferFloatType;
+typedef StructuredBuffer<int> BufferIntType;
+typedef StructuredBuffer<float> BufferFloatType;
+#else
+typedef RWBuffer<float> RWBufferFloatType;
+typedef Buffer<int> BufferIntType;
+typedef Buffer<float> BufferFloatType;
+#endif
+
+RWBufferFloatType vertexBuffer  : register( u0 );
+RWBufferFloatType dstVertexBuffer  : register( u1 );
+BufferIntType    sizes   : register( t1 );
+BufferIntType    offsets : register( t2 );
+BufferIntType    indices : register( t3 );
+BufferFloatType  weights : register( t4 );
 
 //----------------------------------------------------------------------------
 
@@ -96,14 +106,14 @@ class SingleBufferCompute : IComputeKernel {
 
         Vertex dst;
         clear(dst);
-
+        
         int offset = offsets[current],
             size = sizes[current];
-
+        
         for (int i=0; i<size; ++i) {
             addWithWeight(dst, readVertex( indices[offset+i] ), weights[offset+i]);
         }
-
+        
         writeVertex(current, dst);
     }
 };
@@ -148,4 +158,21 @@ void cs_main( uint3 ID : SV_DispatchThreadID )
     // call kernel
     kernel.runKernel(ID);
 }
+
+[numthreads(WORK_GROUP_SIZE, 1, 1)]
+void cs_singleBuffer(uint3 ID : SV_DispatchThreadID)
+{
+    // call kernel
+    SingleBufferCompute kernel;
+    kernel.runKernel(ID);
+}
+
+[numthreads(WORK_GROUP_SIZE, 1, 1)]
+void cs_separateBuffer(uint3 ID : SV_DispatchThreadID)
+{
+    // call kernel
+    SeparateBufferCompute kernel;
+    kernel.runKernel(ID);
+}
+
 
