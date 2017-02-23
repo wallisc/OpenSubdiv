@@ -78,6 +78,7 @@ void D3D12DeferredDeletionQueue::DeleteObject(ID3D12Object **object)
 D3D12CommandQueueContext::D3D12CommandQueueContext(ID3D12CommandQueue *commandQueue, ID3D12Device *device, unsigned int nodeMask, ID3D11DeviceContext *D3D12CommandQueueContext11) :
     _queue(commandQueue),
     _device(device),
+    _descriptorHeapManager(device, nodeMask),
     _commandListAllocator(CommandListAllocatorPairAllocator(device, nodeMask)),
     _D3D12CommandQueueContext11(D3D12CommandQueueContext11),
     _nodeMask(nodeMask),
@@ -108,17 +109,26 @@ void D3D12CommandQueueContext::ExecuteCommandList(ID3D12CommandList *CommandList
     ID3D12CommandList *CommandLists[] = { CommandList };
     _queue->ExecuteCommandLists(ARRAYSIZE(CommandLists), CommandLists);
 
-    _fenceValue++;
-    _queue->Signal(_fence, _fenceValue);
+    SignalAndIncrementFence();
 
     NotifyOnCommandListSubmission();
 }
 
 void D3D12CommandQueueContext::Syncronize()
 {
-    ThrowFailure(_fence->SetEventOnCompletion(_fenceValue, _waitEvent));
+    unsigned long long currentFence = _fenceValue;
+    SignalAndIncrementFence();
+
+    ThrowFailure(_fence->SetEventOnCompletion(currentFence, _waitEvent));
     WaitForSingleObject(_waitEvent, INFINITE);
 }
+
+void D3D12CommandQueueContext::SignalAndIncrementFence()
+{
+    _queue->Signal(_fence, _fenceValue);
+    _fenceValue++;
+}
+
 
 void D3D12CommandQueueContext::ReleaseCommandListAllocatorPair(CommandListAllocatorPair &pair)
 {
@@ -135,6 +145,7 @@ void D3D12CommandQueueContext::NotifyOnCommandListSubmission()
     // Periodically check on the deletion queue to free up objects
     _deferredDeletionQueue.DeleteUnusedObjects(_fence->GetCompletedValue());
 }
+
 
 D3D12CommandQueueContext *CreateD3D12CommandQueueContext(ID3D12CommandQueue *commandQueue, unsigned int nodeMask, ID3D11DeviceContext *pD3D11Context)
 {

@@ -35,6 +35,8 @@ struct ID3D12RootSignature;
 struct ID3D10Blob;
 struct ID3D12CommandAllocator;
 struct ID3D12Fence;
+struct ID3D12DescriptorHeap;
+struct D3D12_CPU_DESCRIPTOR_HANDLE;
 
 #include "../osd/bufferDescriptor.h"
 #include "d3d12commandqueuecontext.h"
@@ -75,21 +77,24 @@ public:
     ~D3D12StencilTable();
 
     // interfaces needed for D3D12ComputeEvaluator
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS GetSizesSRV() const { return _sizes; }
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS GetOffsetsSRV() const { return _offsets; }
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS GetIndicesSRV() const { return _indices; }
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS GetWeightsSRV() const { return _weights; }
+    CPUDescriptorHandle GetSizesSRV() const { return _sizes; }
+    CPUDescriptorHandle GetOffsetsSRV() const { return _offsets; }
+    CPUDescriptorHandle GetIndicesSRV() const { return _indices; }
+    CPUDescriptorHandle GetWeightsSRV() const { return _weights; }
+
+
     int GetNumStencils() const { return _numStencils; }
 
 private:
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS _sizes;
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS _offsets;
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS _indices;
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS _weights;
     DeferredDeletionUniquePtr<ID3D12Resource> _sizesBuffer;
     DeferredDeletionUniquePtr<ID3D12Resource> _offsetsBuffer;
     DeferredDeletionUniquePtr<ID3D12Resource> _indicesBuffer;
     DeferredDeletionUniquePtr<ID3D12Resource> _weightsBuffer;
+
+    CPUDescriptorHandle _sizes;
+    CPUDescriptorHandle _offsets;
+    CPUDescriptorHandle _indices;
+    CPUDescriptorHandle _weights;
 
     int _numStencils;
 };
@@ -198,14 +203,14 @@ public:
 
     /// Dispatch the DX compute kernel on GPU asynchronously.
     /// returns false if the kernel hasn't been compiled yet.
-    bool EvalStencils(ID3D12Resource *srcSRV,
+    bool EvalStencils(CPUDescriptorHandle srcSRV,
                       BufferDescriptor const &srcDesc,
-                      ID3D12Resource *dstUAV,
+                      CPUDescriptorHandle dstUAV,
                       BufferDescriptor const &dstDesc,
-                      OSD_D3D12_GPU_VIRTUAL_ADDRESS sizesSRV,
-                      OSD_D3D12_GPU_VIRTUAL_ADDRESS offsetsSRV,
-                      OSD_D3D12_GPU_VIRTUAL_ADDRESS indicesSRV,
-                      OSD_D3D12_GPU_VIRTUAL_ADDRESS weightsSRV,
+                      CPUDescriptorHandle sizesSRV,
+                      CPUDescriptorHandle offsetsSRV,
+                      CPUDescriptorHandle indicesSRV,
+                      CPUDescriptorHandle weightsSRV,
                       int start,
                       int end,
                       D3D12CommandQueueContext *D3D12CommandQueueContext) const;
@@ -228,19 +233,27 @@ private:
 
     enum
     {
-        SizeRootSRVSlot = 0,
-        OffsetRootSRVSlot,
-        IndexRootSRVSlot,
-        WeightRootSRVSlot,
-        SourceUAVSlot,
-        DestinationUAVSlot,
-        KernelUniformArgsRootConstantSlot
+        ViewSlot = 0,
+        KernelUniformArgsRootConstantSlot,
+        NumSlots
     };
 
-    
+    enum
+    {
+        SizeSRVDescriptorOffset = 0,
+        OffsetSRVDescriptorOffset,
+        IndexSRVDescriptorOffset,
+        WeightSRVDescriptorOffset,
+        SourceUAVDescriptorOffset,
+        DestinationUAVDescriptorOffset,
+        NumDescriptors,
+    };
+
     DeferredDeletionUniquePtr<ID3D12RootSignature> _rootSignature;
     DeferredDeletionUniquePtr<ID3D12PipelineState> _computePSOs[NumberOfCSTypes];
 
+    mutable CPUDescriptorHandle _descriptorTable[NumDescriptors];
+    mutable GPUDescriptorHandle _lastGpuDescriptorTable;
     int _workGroupSize;
 };
 

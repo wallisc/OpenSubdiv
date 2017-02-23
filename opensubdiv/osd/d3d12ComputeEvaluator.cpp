@@ -62,13 +62,6 @@ struct KernelUniformArgs {
     int dstOffset;
 };
 
-static OSD_D3D12_GPU_VIRTUAL_ADDRESS createSRV(ID3D12Resource *buffer,
-                                           DXGI_FORMAT format,
-                                           ID3D12Device *device,
-                                           size_t size) {
-    return (OSD_D3D12_GPU_VIRTUAL_ADDRESS)buffer->GetGPUVirtualAddress();
-}
-
 D3D12StencilTable::D3D12StencilTable(Far::StencilTable const *stencilTable,
                                      D3D12CommandQueueContext *D3D12CommandQueueContext)
  {
@@ -86,19 +79,13 @@ D3D12StencilTable::D3D12StencilTable(Far::StencilTable const *stencilTable,
         createBufferWithVectorInitialData(stencilTable->GetControlIndices(), D3D12CommandQueueContext, pCommandList, _indicesBuffer);
         createBufferWithVectorInitialData(stencilTable->GetWeights(), D3D12CommandQueueContext, pCommandList, _weightsBuffer);
 
+        _sizes   = AllocateSRV(D3D12CommandQueueContext, _sizesBuffer,   DXGI_FORMAT_R32_SINT, stencilTable->GetSizes().size());
+        _offsets = AllocateSRV(D3D12CommandQueueContext, _offsetsBuffer, DXGI_FORMAT_R32_SINT, stencilTable->GetOffsets().size());
+        _indices = AllocateSRV(D3D12CommandQueueContext, _indicesBuffer, DXGI_FORMAT_R32_SINT, stencilTable->GetControlIndices().size());
+        _weights = AllocateSRV(D3D12CommandQueueContext, _weightsBuffer, DXGI_FORMAT_R32_FLOAT, stencilTable->GetWeights().size());
+
         ThrowFailure(pCommandList->Close());
         D3D12CommandQueueContext->ExecuteCommandList(pCommandList);
-
-        _sizes   = createSRV(_sizesBuffer,   DXGI_FORMAT_R32_SINT, pDevice,
-                             stencilTable->GetSizes().size());
-        _offsets = createSRV(_offsetsBuffer, DXGI_FORMAT_R32_SINT, pDevice,
-                             stencilTable->GetOffsets().size());
-        _indices = createSRV(_indicesBuffer, DXGI_FORMAT_R32_SINT, pDevice,
-                             stencilTable->GetControlIndices().size());
-        _weights= createSRV(_weightsBuffer, DXGI_FORMAT_R32_FLOAT, pDevice,
-                            stencilTable->GetWeights().size());
-    } else {
-        _sizes = _offsets = _indices = _weights = NULL;
     }
 }
 
@@ -110,7 +97,7 @@ D3D12StencilTable::~D3D12StencilTable() {
 
 D3D12ComputeEvaluator::D3D12ComputeEvaluator() :
     _workGroupSize(64) {
-
+    memset(_descriptorTable, 0, sizeof(_descriptorTable));
 }
 
 D3D12ComputeEvaluator *
@@ -170,18 +157,18 @@ D3D12ComputeEvaluator::Compile(BufferDescriptor const &srcDesc,
     assert(device);
 
     {
+        D3D12_DESCRIPTOR_RANGE range[2];
+        range[0] = CD3DX12_DESCRIPTOR_RANGE(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 1);
+        range[1] = CD3DX12_DESCRIPTOR_RANGE(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0);
 
         UINT parameterIndex = 0;
-        CD3DX12_ROOT_PARAMETER rootParameters[7];
-        rootParameters[SizeRootSRVSlot].InitAsShaderResourceView(1);
-        rootParameters[OffsetRootSRVSlot].InitAsShaderResourceView(2);
-        rootParameters[IndexRootSRVSlot].InitAsShaderResourceView(3);
-        rootParameters[WeightRootSRVSlot].InitAsShaderResourceView(4);
-        rootParameters[SourceUAVSlot].InitAsUnorderedAccessView(0);
-        rootParameters[DestinationUAVSlot].InitAsUnorderedAccessView(1);
+        CD3DX12_ROOT_PARAMETER rootParameters[NumSlots];
+        rootParameters[ViewSlot].InitAsDescriptorTable(ARRAYSIZE(range), range);
         rootParameters[KernelUniformArgsRootConstantSlot].InitAsConstants(sizeof(KernelUniformArgs) / sizeof(UINT32), 0);
 
-        D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = CD3DX12_ROOT_SIGNATURE_DESC(ARRAYSIZE(rootParameters), rootParameters);
+        D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = CD3DX12_ROOT_SIGNATURE_DESC(
+            ARRAYSIZE(rootParameters),
+            rootParameters);
 
         CComPtr<ID3DBlob> rootSignatureBlob, errorBlob;
         ThrowFailure(D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &rootSignatureBlob, &errorBlob));
@@ -200,21 +187,17 @@ D3D12ComputeEvaluator::Compile(BufferDescriptor const &srcDesc,
     dwShaderFlags |= D3DCOMPILE_DEBUG;
 #endif
 
-    bool UseStructuredBuffers = true;
-
     std::ostringstream ss;
     ss << srcDesc.length;  std::string lengthValue(ss.str()); ss.str("");
     ss << srcDesc.stride;  std::string srcStrideValue(ss.str()); ss.str("");
     ss << dstDesc.stride;  std::string dstStrideValue(ss.str()); ss.str("");
     ss << _workGroupSize;  std::string workgroupSizeValue(ss.str()); ss.str("");
-    ss << UseStructuredBuffers;  std::string useStructuredBuffersValue(ss.str()); ss.str("");
 
     D3D_SHADER_MACRO defines[] =
         { "LENGTH", lengthValue.c_str(),
           "SRC_STRIDE", srcStrideValue.c_str(),
           "DST_STRIDE", dstStrideValue.c_str(),
           "WORK_GROUP_SIZE", workgroupSizeValue.c_str(),
-          "USE_STRUCTURED_BUFFERS", useStructuredBuffersValue.c_str(),
           0, 0 };
 
     LPCSTR shaderEntrypointName[] = { "cs_singleBuffer", "cs_separateBuffer" };
@@ -259,14 +242,14 @@ D3D12ComputeEvaluator::Synchronize(D3D12CommandQueueContext *D3D12CommandQueueCo
 }
 
 bool
-D3D12ComputeEvaluator::EvalStencils(ID3D12Resource *srcUAV,
+D3D12ComputeEvaluator::EvalStencils(CPUDescriptorHandle srcUAV,
                                     BufferDescriptor const &srcDesc,
-                                    ID3D12Resource *dstUAV,
+                                    CPUDescriptorHandle dstUAV,
                                     BufferDescriptor const &dstDesc,
-                                    OSD_D3D12_GPU_VIRTUAL_ADDRESS sizesSRV,
-                                    OSD_D3D12_GPU_VIRTUAL_ADDRESS offsetsSRV,
-                                    OSD_D3D12_GPU_VIRTUAL_ADDRESS indicesSRV,
-                                    OSD_D3D12_GPU_VIRTUAL_ADDRESS weightsSRV,
+                                    CPUDescriptorHandle sizesSRV,
+                                    CPUDescriptorHandle offsetsSRV,
+                                    CPUDescriptorHandle indicesSRV,
+                                    CPUDescriptorHandle weightsSRV,
                                     int start,
                                     int end,
                                     D3D12CommandQueueContext *D3D12CommandQueueContext) const {
@@ -287,21 +270,36 @@ D3D12ComputeEvaluator::EvalStencils(ID3D12Resource *srcUAV,
 
     // Bind constants
     pCommandList->SetComputeRoot32BitConstants(KernelUniformArgsRootConstantSlot, sizeof(KernelUniformArgs) / sizeof(UINT32), &args, 0);
+    
+    ID3D12DescriptorHeap *descriptorHeaps[] = { D3D12CommandQueueContext->GetDescriptorHeapManager().GetDescriptorHeap() };
+    pCommandList->SetDescriptorHeaps(ARRAYSIZE(descriptorHeaps), descriptorHeaps);
 
     // Bind SRVs
-    pCommandList->SetComputeRootShaderResourceView(SizeRootSRVSlot, sizesSRV);
-    pCommandList->SetComputeRootShaderResourceView(OffsetRootSRVSlot, offsetsSRV);
-    pCommandList->SetComputeRootShaderResourceView(IndexRootSRVSlot, indicesSRV);
-    pCommandList->SetComputeRootShaderResourceView(WeightRootSRVSlot, weightsSRV);
+    if (_descriptorTable[SizeSRVDescriptorOffset] != sizesSRV || 
+        _descriptorTable[OffsetSRVDescriptorOffset] != offsetsSRV ||
+        _descriptorTable[IndexSRVDescriptorOffset] != indicesSRV || 
+        _descriptorTable[WeightSRVDescriptorOffset] != weightsSRV || 
+        _descriptorTable[SourceUAVDescriptorOffset] != srcUAV ||
+        _descriptorTable[DestinationUAVDescriptorOffset] != dstUAV)
+    {
+        _descriptorTable[SizeSRVDescriptorOffset] = sizesSRV;
+        _descriptorTable[OffsetSRVDescriptorOffset] = offsetsSRV;
+        _descriptorTable[IndexSRVDescriptorOffset] = indicesSRV;
+        _descriptorTable[WeightSRVDescriptorOffset] = weightsSRV;
+        _descriptorTable[SourceUAVDescriptorOffset] = srcUAV;
+        _descriptorTable[DestinationUAVDescriptorOffset] = dstUAV;
+
+        _lastGpuDescriptorTable = D3D12CommandQueueContext->GetDescriptorHeapManager().UploadDescriptors(NumDescriptors, _descriptorTable);
+    }
+
+    pCommandList->SetComputeRootDescriptorTable(ViewSlot, D3D12DescriptorHeapManager::ConvertToD3D12GPUHandle(_lastGpuDescriptorTable));
 
     // Bind the source UAV
-    pCommandList->SetComputeRootUnorderedAccessView(SourceUAVSlot, srcUAV->GetGPUVirtualAddress());
     const bool bOnlyUsingSourceUAV = srcUAV == dstUAV;
     if (bOnlyUsingSourceUAV) {
         pCommandList->SetPipelineState(_computePSOs[SingleBufferCSIndex].Get());
     } else {
         pCommandList->SetPipelineState(_computePSOs[SeparateBufferCSIndex].Get());
-        pCommandList->SetComputeRootUnorderedAccessView(DestinationUAVSlot, dstUAV->GetGPUVirtualAddress());
     }
 
     pCommandList->Dispatch((count + _workGroupSize - 1) / _workGroupSize, 1, 1);

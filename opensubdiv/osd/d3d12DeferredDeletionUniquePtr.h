@@ -27,6 +27,7 @@
 
 #include "../version.h"
 
+#include "../osd/nonCopyable.h"
 #include "../osd/d3d12commandqueuecontext.h"
 
 namespace OpenSubdiv {
@@ -39,7 +40,7 @@ namespace Osd {
     // destructor is called, the D3D12Object will be passed along to a Deferred Deletion Queue 
     // that tracks when the GPU is done with the object
     template<typename Object>
-    class DeferredDeletionUniquePtr
+    class DeferredDeletionUniquePtr : NonCopyable<DeferredDeletionUniquePtr<Object>>
     {
     public:
         DeferredDeletionUniquePtr() :

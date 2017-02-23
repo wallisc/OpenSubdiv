@@ -37,7 +37,7 @@ namespace OPENSUBDIV_VERSION {
 namespace Osd {
 
 D3D12LegacyGregoryPatchTable::D3D12LegacyGregoryPatchTable() :
-    _vertexSRV(0), _vertexValenceSRV(0), _quadOffsetsSRV(0) {
+    _vertexSRV(0) {
     _quadOffsetsBase[0] = _quadOffsetsBase[1] = 0;
 }
 
@@ -61,16 +61,12 @@ D3D12LegacyGregoryPatchTable::Create(Far::PatchTable const *farPatchTable,
     if (! valenceTable.empty()) {
         // bd.StructureByteStride = sizeof(unsigned int);
         createBufferWithVectorInitialData(valenceTable, D3D12CommandQueueContext, commandList, result->_vertexValenceBuffer);
-
-        result->_vertexValenceSRV = result->_vertexValenceBuffer->GetGPUVirtualAddress();
     }
 
     if (! quadOffsetsTable.empty()) {
         //bd.StructureByteStride = sizeof(unsigned int);
         createBufferWithVectorInitialData(quadOffsetsTable, D3D12CommandQueueContext, commandList, result->_quadOffsetsBuffer);
 
-        // srvd.Format = DXGI_FORMAT_R32_SINT;
-        result->_quadOffsetsSRV = result->_quadOffsetsBuffer->GetGPUVirtualAddress();
     }
 
     // Execute the initial data upload
@@ -103,7 +99,7 @@ D3D12LegacyGregoryPatchTable::UpdateVertexBuffer(
     UNREFERENCED_PARAMETER(numVertices);
     UNREFERENCED_PARAMETER(numVertexElements);
     
-    _vertexSRV = vbo->GetGPUVirtualAddress();
+    _vertexSRV = vbo;
 }
 
 }  // end namespace Osd

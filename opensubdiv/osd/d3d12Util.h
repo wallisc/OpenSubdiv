@@ -160,6 +160,41 @@ namespace Osd {
         ResourceDeferredDeletionUniquePtr &resource) {
         return createBufferWithInitialData((void*)&src.at(0), (unsigned int)(src.size() * sizeof(T)), D3D12CommandQueueContext, pCommandList, resource);
     }
+
+    static CPUDescriptorHandle AllocateUAV(
+        D3D12CommandQueueContext *D3D12CommandQueueContext, 
+        ID3D12Resource *resource, 
+        DXGI_FORMAT format, 
+        SIZE_T numElements)
+    {
+        CPUDescriptorHandle cpuHandle = D3D12CommandQueueContext->GetDescriptorHeapManager().AllocateDescriptor();
+
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+        uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        uavDesc.Format = format;
+        uavDesc.Buffer.NumElements = (unsigned int)numElements;
+        D3D12CommandQueueContext->GetDevice()->CreateUnorderedAccessView(resource, nullptr, &uavDesc, D3D12DescriptorHeapManager::ConvertToD3D12CPUHandle(cpuHandle));
+
+        return cpuHandle;
+    }
+
+    static CPUDescriptorHandle AllocateSRV(
+        D3D12CommandQueueContext *D3D12CommandQueueContext, 
+        ID3D12Resource *resource, 
+        DXGI_FORMAT format, 
+        SIZE_T numElements)
+    {
+        CPUDescriptorHandle cpuHandle = D3D12CommandQueueContext->GetDescriptorHeapManager().AllocateDescriptor();
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srvDesc.Format = format;
+        srvDesc.Buffer.NumElements = (unsigned int)numElements;
+        D3D12CommandQueueContext->GetDevice()->CreateShaderResourceView(resource, &srvDesc, D3D12DescriptorHeapManager::ConvertToD3D12CPUHandle(cpuHandle));
+
+        return cpuHandle;
+    }
 }  // end namespace Osd
 
 }  // end namespace OPENSUBDIV_VERSION

@@ -68,14 +68,12 @@ public:
     int GetNumVertices() const;
 
     /// Returns the D3D11 buffer object.
-    ID3D12Resource *BindD3D12Buffer(D3D12CommandQueueContext* D3D12CommandQueueContext);
 
 
     /// Returns the D3D11 buffer object (for Osd::Mesh interface)
     ID3D11Buffer *BindVBO(D3D12CommandQueueContext *D3D12CommandQueueContext);
 
     /// Returns the D3D12 UAV
-    ID3D12Resource *BindD3D12UAV(D3D12CommandQueueContext* D3D12CommandQueueContext);
 
 protected:
     /// Constructor.
@@ -91,7 +89,7 @@ private:
     DeferredDeletionUniquePtr<ID3D12Resource> _buffer;
     DeferredDeletionUniquePtr<ID3D12Resource> _readbackBuffer;
     DeferredDeletionUniquePtr<ID3D12Resource> _uploadBuffer;
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS _uav;
+
     CComPtr<ID3D11Buffer> _d3d11Buffer;  
 };
 

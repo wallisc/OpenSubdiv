@@ -29,6 +29,7 @@
 #include <assert.h>
 #include "d3d12FenceTrackedObjectQueue.h"
 #include "d3d12PoolAllocator.h"
+#include "d3d12DescriptorHeapManager.h"
 
 struct ID3D12CommandQueue;
 struct ID3D12GraphicsCommandList;
@@ -99,21 +100,24 @@ namespace Osd {
             return _queue;
         }
 
+        D3D12DescriptorHeapManager &GetDescriptorHeapManager() { return _descriptorHeapManager; }
         void DeleteD3D12Object(ID3D12Object *Object);
     private:
         void NotifyOnCommandListSubmission();
+        void SignalAndIncrementFence();
 
+        D3D12DescriptorHeapManager _descriptorHeapManager;
         D3D12DeferredDeletionQueue _deferredDeletionQueue;
         D3D12PoolAllocator<CommandListAllocatorPair, CommandListAllocatorPairAllocator> _commandListAllocator;
         CComPtr<ID3D12Device> _device;
         CComPtr<ID3D12CommandQueue> _queue;
         CComPtr<ID3D12Fence> _fence;
+
         unsigned long long _fenceValue;
         unsigned int _nodeMask;
         HANDLE _waitEvent;
     };
 
-    typedef unsigned long long OSD_D3D12_GPU_VIRTUAL_ADDRESS;
 
     D3D12CommandQueueContext *CreateD3D12CommandQueueContext(ID3D12CommandQueue *pCommandQueue, unsigned int nodeMask, ID3D11DeviceContext *D3D12CommandQueueContext);
     void FreeD3D12CommandQueueContext(D3D12CommandQueueContext *D3D12CommandQueueContext);

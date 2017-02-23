@@ -59,16 +59,16 @@ public:
                             int numVertices, int numVertexElements,
                             D3D12CommandQueueContext *D3D12CommandQueueContext);
 
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS GetVertexSRV() const {
+    ID3D12Resource *GetVertexSRV() const {
         return _vertexSRV;
     }
 
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS GetVertexValenceSRV() const {
-        return _vertexValenceSRV;
+    ID3D12Resource *GetVertexValenceSRV() const {
+        return _vertexValenceBuffer.Get();
     }
 
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS GetQuadOffsetsSRV() const {
-        return _quadOffsetsSRV;
+    ID3D12Resource *GetQuadOffsetsSRV() const {
+        return _quadOffsetsBuffer.Get();
     }
 
     int GetQuadOffsetsBase(Far::PatchDescriptor::Type type) {
@@ -85,9 +85,7 @@ private:
 
     DeferredDeletionUniquePtr<ID3D12Resource> _vertexValenceBuffer;
     DeferredDeletionUniquePtr<ID3D12Resource> _quadOffsetsBuffer;
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS _vertexSRV;
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS _vertexValenceSRV;
-    OSD_D3D12_GPU_VIRTUAL_ADDRESS _quadOffsetsSRV;
+    ID3D12Resource* _vertexSRV;
     int _quadOffsetsBase[2];       // gregory, boundaryGregory
 };
 
