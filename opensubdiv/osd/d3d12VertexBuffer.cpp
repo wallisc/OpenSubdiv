@@ -94,11 +94,13 @@ D3D12VertexBuffer::GetNumVertices() const {
     return _numVertices;
 }
 
+CPUDescriptorHandle
 D3D12VertexBuffer::BindD3D12Buffer(D3D12CommandQueueContext* D3D12CommandQueueContext) {
 
     return _uav;
 }
 
+CPUDescriptorHandle
 D3D12VertexBuffer::BindD3D12UAV(D3D12CommandQueueContext* D3D12CommandQueueContext) {
 
     return BindD3D12Buffer(D3D12CommandQueueContext);
@@ -164,6 +166,7 @@ D3D12VertexBuffer::allocate(D3D12CommandQueueContext* D3D12CommandQueueContext) 
         ThrowFailure(pDevice->CreateBuffer(&desc, nullptr, &_d3d11Buffer));
     }
 
+    _uav = AllocateUAV(D3D12CommandQueueContext, _buffer, DXGI_FORMAT_R32_FLOAT, _numElements * _numVertices);
     
     return true;
 }
