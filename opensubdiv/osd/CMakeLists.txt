@@ -312,6 +312,7 @@ list(APPEND DOXY_HEADER_FILES ${OPENCL_PUBLIC_HEADERS})
 set(D3D12_PUBLIC_HEADERS
     d3d12commandqueuecontext.h
     d3d12DeferredDeletionUniquePtr.h
+    d3d12DescriptorHeapManager.h
     d3d12FenceTrackedObjectQueue.h
     d3d12PoolAllocator.h
     d3d12util.h
@@ -327,6 +328,7 @@ if ( DX12SDK_FOUND )
         d3d12ComputeEvaluator.cpp
         d3d12LegacyGregoryPatchTable.cpp
         d3d12VertexBuffer.cpp
+        d3d12DescriptorHeapManager.cpp
     )
     list(APPEND PUBLIC_HEADER_FILES ${D3D12_PUBLIC_HEADERS})
     list(APPEND PLATFORM_GPU_LIBRARIES

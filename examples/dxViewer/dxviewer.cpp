@@ -75,9 +75,14 @@
         void operator()(OpenSubdiv::Osd::D3D12CommandQueueContext *D3D12CommandQueueContext) {
             OpenSubdiv::Osd::FreeD3D12CommandQueueContext(D3D12CommandQueueContext);
 
-            CComPtr<IDXGIDebug1> pDXGIDebug;
-            DXGIGetDebugInterface1(0, IID_PPV_ARGS(&pDXGIDebug));
-            pDXGIDebug->ReportLiveObjects(DXGI_DEBUG_ALL1, DXGI_DEBUG_RLO_ALL);
+            static bool bCheckForD3DLeaks = false;
+            if (bCheckForD3DLeaks)
+            {
+                CComPtr<IDXGIDebug1> pDXGIDebug;
+                DXGIGetDebugInterface1(0, IID_PPV_ARGS(&pDXGIDebug));
+                pDXGIDebug->ReportLiveObjects(DXGI_DEBUG_ALL1, DXGI_DEBUG_RLO_ALL);
+
+            }
         }
     };
 
@@ -1101,7 +1106,7 @@ callbackKernel(int k) {
 #ifdef OPENSUBDIV_HAS_DX12
     if (g_kernel == kDirect3D12 && (g_D3D12CommandQueueContext == nullptr)) {
 
-        static bool bUseDebugLayer = true;
+        static bool bUseDebugLayer = false;
         if (bUseDebugLayer)
         {
             ID3D12Debug *pDebug;
@@ -1399,7 +1404,7 @@ initD3D11(HWND hWnd) {
     for(UINT driverTypeIndex=0; driverTypeIndex < numDriverTypes; driverTypeIndex++){
         hDriverType = driverTypes[driverTypeIndex];
         hr = D3D11CreateDeviceAndSwapChain(NULL,
-                                           hDriverType, NULL, D3D11_CREATE_DEVICE_DEBUG, NULL, 0,
+                                           hDriverType, NULL, 0, NULL, 0,
                                            D3D11_SDK_VERSION, &hDXGISwapChainDesc,
                                            &g_pSwapChain, &g_pd3dDevice,
                                            &hFeatureLevel, &g_pd3dDeviceContext);
