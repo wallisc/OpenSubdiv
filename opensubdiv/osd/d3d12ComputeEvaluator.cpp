@@ -178,7 +178,7 @@ D3D12ComputeEvaluator::Compile(BufferDescriptor const &srcDesc,
         _rootSignature.AddRefAndAttach(D3D12CommandQueueContext, rootSignatureComPtr);
     }
 
-    DWORD dwShaderFlags = D3DCOMPILE_ENABLE_STRICTNESS;
+    DWORD dwShaderFlags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_ALL_RESOURCES_BOUND | D3DCOMPILE_OPTIMIZATION_LEVEL3;
 #if defined(D3D10_SHADER_RESOURCES_MAY_ALIAS)
      dwShaderFlags |= D3D10_SHADER_RESOURCES_MAY_ALIAS;
 #endif

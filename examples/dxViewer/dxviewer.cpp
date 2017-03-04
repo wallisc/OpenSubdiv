@@ -23,6 +23,12 @@
 //
 
 #include <D3D11.h>
+#include <DXGI1_3.h>
+#include <D3D12.h>
+#include <D3D11on12.h>
+
+bool g_bUse11on12 = true;
+
 #include <D3Dcompiler.h>
 
 #include <far/error.h>
@@ -125,8 +131,7 @@ enum KernelType { kCPU           = 0,
                   kCUDA          = 3,
                   kCL            = 4,
                   kDirectCompute = 5,
-                  kDirect3D12    = 6,
-};
+                  kDirect3D12    = 6, };
 
 enum DisplayStyle { kDisplayStyleWire = 0,
                     kDisplayStyleShaded,
@@ -185,6 +190,8 @@ float g_rotate[2] = {0, 0},
 int   g_width = 1024,
       g_height = 1024;
 
+bool g_isSwapchainInitialized = false;
+
 D3D11hud *g_hud = NULL;
 D3D11ControlMeshDisplay *g_controlMeshDisplay = NULL;
 float g_modelViewProjectionMatrix[16];
@@ -206,10 +213,19 @@ int g_tessLevelMin = 1;
 int g_kernel = kCPU;
 float g_moveScale = 0.0f;
 
+
+ID3D12Device * g_pd3d12Device = NULL;
+ID3D12CommandQueue * g_pd3dcommandQueue = NULL;
+ID3D11On12Device * g_pd3d11on12Device = NULL;
+
 ID3D11Device * g_pd3dDevice = NULL;
 ID3D11DeviceContext * g_pd3dDeviceContext = NULL;
-IDXGISwapChain * g_pSwapChain = NULL;
-ID3D11RenderTargetView * g_pSwapChainRTV = NULL;
+IDXGISwapChain1 * g_pSwapChain = NULL;
+
+UINT g_currentBackBufferIndex = 0;
+const UINT g_backBufferCount = 2;
+ID3D11RenderTargetView * g_pSwapChainRTVs[g_backBufferCount] = {};
+ID3D11Resource *g_pWrappedBackbufferResources[g_backBufferCount] = {};
 
 ID3D11RasterizerState* g_pRasterizerState = NULL;
 ID3D11InputLayout* g_pInputLayout = NULL;
@@ -230,7 +246,6 @@ bool g_bDone;
 //------------------------------------------------------------------------------
 static void
 updateGeom() {
-
     int nverts = (int)g_orgPositions.size() / 3;
 
     std::vector<float> vertex;
@@ -425,7 +440,6 @@ createOsdMesh(ShapeDesc const & shapeDesc, int level, int kernel, Scheme scheme=
 #ifdef OPENSUBDIV_HAS_DX12
     }
     else if (g_kernel == kDirect3D12) {
-        
         static Osd::EvaluatorCacheT<Osd::D3D12ComputeEvaluator> d3d12ComputeEvaluatorCache;
         g_mesh = new Osd::Mesh<Osd::D3D12VertexBuffer,
             Osd::D3D12StencilTable,
@@ -870,7 +884,7 @@ static void
 display() {
 
     float color[4] = {0.006f, 0.006f, 0.006f, 1.0f};
-    g_pd3dDeviceContext->ClearRenderTargetView(g_pSwapChainRTV, color);
+    g_pd3dDeviceContext->ClearRenderTargetView(g_pSwapChainRTVs[g_currentBackBufferIndex], color);
 
     // Clear the depth buffer.
     g_pd3dDeviceContext->ClearDepthStencilView(g_pDepthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0);
@@ -993,7 +1007,15 @@ display() {
         g_hud->Flush();
     }
 
-    g_pSwapChain->Present(0, 0);
+    if (g_bUse11on12)
+    {
+        g_pd3d11on12Device->ReleaseWrappedResources(&g_pWrappedBackbufferResources[g_currentBackBufferIndex], 1);
+        g_pd3dDeviceContext->Flush();
+    }
+    
+    static const DXGI_PRESENT_PARAMETERS params = {};
+    g_pSwapChain->Present1(0, 0, &params);
+    g_currentBackBufferIndex = (g_currentBackBufferIndex + 1) % g_backBufferCount;
 }
 
 //------------------------------------------------------------------------------
@@ -1056,10 +1078,14 @@ quit() {
     SAFE_RELEASE(g_pcbMaterial);
     SAFE_RELEASE(g_pDepthStencilView);
 
-    SAFE_RELEASE(g_pSwapChainRTV);
     SAFE_RELEASE(g_pSwapChain);
     SAFE_RELEASE(g_pd3dDeviceContext);
     SAFE_RELEASE(g_pd3dDevice);
+
+    for (UINT i = 0; i < g_backBufferCount; i++)
+    {
+        SAFE_RELEASE(g_pSwapChainRTVs[i]);
+    }
 
     PostQuitMessage(0);
     exit(0);
@@ -1103,45 +1129,6 @@ callbackKernel(int k) {
 
     g_kernel = k;
 
-#ifdef OPENSUBDIV_HAS_DX12
-    if (g_kernel == kDirect3D12 && (g_D3D12CommandQueueContext == nullptr)) {
-
-        static bool bUseDebugLayer = false;
-        if (bUseDebugLayer)
-        {
-            ID3D12Debug *pDebug;
-            D3D12GetDebugInterface(IID_PPV_ARGS(&pDebug));
-
-            pDebug->EnableDebugLayer();
-        }
-
-        IDXGIAdapter *pAdapter = nullptr;
-        static bool useWarp = false;
-        if (useWarp)
-        {
-            IDXGIFactory4 *pFactory;
-            CreateDXGIFactory1(IID_PPV_ARGS(&pFactory));
-
-            pFactory->EnumWarpAdapter(IID_PPV_ARGS(&pAdapter));
-        }
-
-        ID3D12Device *pDevice;
-        D3D12CreateDevice(pAdapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&pDevice));
-
-        D3D12_COMMAND_QUEUE_DESC commandQueueDesc = {};
-        ID3D12CommandQueue *pQueue;
-        commandQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-        commandQueueDesc.NodeMask = 0;
-        commandQueueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
-        commandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-        pDevice->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(&pQueue));
-
-        g_D3D12CommandQueueContext = D3D12CommandQueueContextUniquePtr(OpenSubdiv::Osd::CreateD3D12CommandQueueContext(pQueue, 0, g_pd3dDeviceContext));
-
-        SAFE_RELEASE(pDevice);
-        SAFE_RELEASE(pQueue);
-    }
-#endif
 #ifdef OPENSUBDIV_HAS_OPENCL_DX_INTEROP
     if (g_kernel == kCL && (!g_clDeviceContext.IsInitialized())) {
         if (g_clDeviceContext.Initialize(g_pd3dDeviceContext) == false) {
@@ -1380,22 +1367,18 @@ initD3D11(HWND hWnd) {
 
     UINT numDriverTypes = ARRAYSIZE(driverTypes);
 
-    DXGI_SWAP_CHAIN_DESC hDXGISwapChainDesc;
-    hDXGISwapChainDesc.BufferDesc.Width = g_width;
-    hDXGISwapChainDesc.BufferDesc.Height = g_height;
-    hDXGISwapChainDesc.BufferDesc.RefreshRate.Numerator  = 0;
-    hDXGISwapChainDesc.BufferDesc.RefreshRate.Denominator = 1;
-    hDXGISwapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-    hDXGISwapChainDesc.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
-    hDXGISwapChainDesc.BufferDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED;
+    DXGI_SWAP_CHAIN_DESC1 hDXGISwapChainDesc = {};
+    hDXGISwapChainDesc.Width = g_width;
+    hDXGISwapChainDesc.Height = g_height;
+    hDXGISwapChainDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    hDXGISwapChainDesc.Scaling = DXGI_SCALING_NONE;
     hDXGISwapChainDesc.SampleDesc.Count = 1;
     hDXGISwapChainDesc.SampleDesc.Quality = 0;
     hDXGISwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    hDXGISwapChainDesc.BufferCount = 1;
-    hDXGISwapChainDesc.OutputWindow = hWnd;
-    hDXGISwapChainDesc.Windowed = TRUE;
-    hDXGISwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-    hDXGISwapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    hDXGISwapChainDesc.BufferCount = g_backBufferCount;
+    hDXGISwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    hDXGISwapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+    hDXGISwapChainDesc.Flags = 0;
 
     // create device and swap chain
     HRESULT hr;
@@ -1403,14 +1386,74 @@ initD3D11(HWND hWnd) {
     D3D_FEATURE_LEVEL hFeatureLevel = D3D_FEATURE_LEVEL_11_0;
     for(UINT driverTypeIndex=0; driverTypeIndex < numDriverTypes; driverTypeIndex++){
         hDriverType = driverTypes[driverTypeIndex];
-        hr = D3D11CreateDeviceAndSwapChain(NULL,
-                                           hDriverType, NULL, 0, NULL, 0,
-                                           D3D11_SDK_VERSION, &hDXGISwapChainDesc,
-                                           &g_pSwapChain, &g_pd3dDevice,
-                                           &hFeatureLevel, &g_pd3dDeviceContext);
+
+        if (g_bUse11on12)
+        {
+#if 0
+            ID3D12Debug *debugController;
+            if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
+            {
+                debugController->EnableDebugLayer();
+            }
+            debugController->Release();
+#endif
+
+            hr = D3D12CreateDevice(nullptr, hFeatureLevel, IID_PPV_ARGS(&g_pd3d12Device));
+            if (FAILED(hr)) goto loopend;
+
+            D3D12_COMMAND_QUEUE_DESC createQueueDesc;
+            createQueueDesc.NodeMask = 0;
+            createQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+            createQueueDesc.Priority = 0;
+            createQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+
+            hr = g_pd3d12Device->CreateCommandQueue(&createQueueDesc, IID_PPV_ARGS(&g_pd3dcommandQueue));
+            if (FAILED(hr)) goto loopend;
+
+            IUnknown *ppQueues[] = { g_pd3dcommandQueue };
+            hr = D3D11On12CreateDevice(g_pd3d12Device, 0, &hFeatureLevel, 1, ppQueues, ARRAYSIZE(ppQueues), 0, &g_pd3dDevice, &g_pd3dDeviceContext, nullptr);
+            if (FAILED(hr)) goto loopend;
+
+            hr = g_pd3dDevice->QueryInterface(IID_PPV_ARGS(&g_pd3d11on12Device));
+            if (FAILED(hr)) goto loopend;
+
+            g_D3D12CommandQueueContext = D3D12CommandQueueContextUniquePtr(
+                OpenSubdiv::Osd::CreateD3D12CommandQueueContext(
+                    g_pd3dcommandQueue, 
+                    0, 
+                    g_pd3dDeviceContext,
+                    g_pd3d11on12Device));
+
+        }
+        else
+        {
+            hr = D3D11CreateDevice(nullptr, hDriverType, 0, 0, &hFeatureLevel, 1, D3D11_SDK_VERSION, &g_pd3dDevice, nullptr, &g_pd3dDeviceContext);
+        }
+        if (FAILED(hr)) goto loopend;
+
+        
+        IDXGIFactory2 *pFactory;
+        hr = CreateDXGIFactory2(0, IID_PPV_ARGS(&pFactory));
+        if (FAILED(hr)) goto loopend;
+
+        hr = pFactory->CreateSwapChainForHwnd(
+            g_bUse11on12 ? (IUnknown *)g_pd3dcommandQueue : (IUnknown *)g_pd3dDevice,
+            hWnd, 
+            &hDXGISwapChainDesc, 
+            nullptr, 
+            nullptr, 
+            &g_pSwapChain);
+
         if(SUCCEEDED(hr)){
+            pFactory->Release();
             break;
         }
+
+    loopend:
+        SAFE_RELEASE(pFactory);
+        SAFE_RELEASE(g_pd3d12Device);
+        SAFE_RELEASE(g_pd3dcommandQueue);
+
     }
 
     if(FAILED(hr)){
@@ -1493,49 +1536,85 @@ updateRenderTarget(HWND hWnd) {
     UINT width = rc.right - rc.left;
     UINT height = rc.bottom - rc.top;
 
-    if (g_pSwapChainRTV && (g_width == width) && (g_height == height)) {
-        return true;
+    if (!((g_width == width) && (g_height == height)) || !g_isSwapchainInitialized) {
+        g_isSwapchainInitialized = true;
+        g_width = width;
+        g_height = height;
+
+        g_hud->Rebuild(g_width, g_height);
+        g_pSwapChain->ResizeBuffers(0, g_width, g_height, DXGI_FORMAT_UNKNOWN, 0);
+
+        // create depth buffer
+        D3D11_TEXTURE2D_DESC depthBufferDesc;
+        ZeroMemory(&depthBufferDesc, sizeof(depthBufferDesc));
+        depthBufferDesc.Width = g_width;
+        depthBufferDesc.Height = g_height;
+        depthBufferDesc.MipLevels = 1;
+        depthBufferDesc.ArraySize = 1;
+        depthBufferDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+        depthBufferDesc.SampleDesc.Count = 1;
+        depthBufferDesc.SampleDesc.Quality = 0;
+        depthBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+        depthBufferDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+        depthBufferDesc.CPUAccessFlags = 0;
+        depthBufferDesc.MiscFlags = 0;
+
+        if (FAILED(g_pd3dDevice->CreateTexture2D(&depthBufferDesc, NULL, &g_pDepthStencilBuffer)))
+        {
+            MessageBoxW(hWnd, L"CreateTexture2D", L"Err", MB_ICONSTOP);
+            return false;
+        }
+        assert(g_pDepthStencilBuffer);
+
+        for (auto &pRTV : g_pSwapChainRTVs)
+        {
+            SAFE_RELEASE(pRTV);
+        }
     }
-    g_width = width;
-    g_height = height;
 
-    g_hud->Rebuild(g_width, g_height);
 
-    SAFE_RELEASE(g_pSwapChainRTV);
+    if (g_pSwapChainRTVs[g_currentBackBufferIndex] == nullptr) {
+        ID3D11Resource* hpBackBuffer = NULL;
+        if (g_bUse11on12)
+        {
+            ID3D12Resource* hpBackBuffer12 = NULL;
+            if (FAILED(g_pSwapChain->GetBuffer(g_currentBackBufferIndex, __uuidof(ID3D12Resource), (void**)&hpBackBuffer12))) {
+                MessageBoxW(hWnd, L"SwpChain GetBuffer", L"Err", MB_ICONSTOP);
+                return false;
+            }
 
-    g_pSwapChain->ResizeBuffers(0, g_width, g_height, DXGI_FORMAT_UNKNOWN, 0);
+            D3D11_RESOURCE_FLAGS d3d11Flags;
+            d3d11Flags.BindFlags = D3D11_BIND_RENDER_TARGET;
+            d3d11Flags.CPUAccessFlags = 0;
+            d3d11Flags.StructureByteStride = 0;
+            d3d11Flags.MiscFlags = 0;
+            if (FAILED(g_pd3d11on12Device->CreateWrappedResource(hpBackBuffer12, &d3d11Flags, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT, IID_PPV_ARGS(&g_pWrappedBackbufferResources[g_currentBackBufferIndex]))))
+            {
+                MessageBoxW(hWnd, L"CreateWrappedResource", L"Err", MB_ICONSTOP);
+                return false;
+            }
+            SAFE_RELEASE(hpBackBuffer12);
+            hpBackBuffer = g_pWrappedBackbufferResources[g_currentBackBufferIndex];
+        }
+        else
+        {
+            if (FAILED(g_pSwapChain->GetBuffer(0, __uuidof(ID3D11Resource), (void**)&hpBackBuffer))) {
+                MessageBoxW(hWnd, L"SwpChain GetBuffer", L"Err", MB_ICONSTOP);
+                return false;
+            }
+        }
 
-    // get backbuffer of swap chain
-    ID3D11Texture2D* hpBackBuffer = NULL;
-    if(FAILED(g_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&hpBackBuffer))){
-        MessageBoxW(hWnd, L"SwpChain GetBuffer", L"Err", MB_ICONSTOP);
-        return false;
+        // create render target from the back buffer
+        if (FAILED(g_pd3dDevice->CreateRenderTargetView(hpBackBuffer, NULL, &g_pSwapChainRTVs[g_currentBackBufferIndex]))) {
+            MessageBoxW(hWnd, L"CreateRenderTargetView", L"Err", MB_ICONSTOP);
+            return false;
+        }
     }
 
-    // create render target from the back buffer
-    if(FAILED(g_pd3dDevice->CreateRenderTargetView(hpBackBuffer, NULL, &g_pSwapChainRTV))){
-        MessageBoxW(hWnd, L"CreateRenderTargetView", L"Err", MB_ICONSTOP);
-        return false;
+    if (g_bUse11on12)
+    {
+        g_pd3d11on12Device->AcquireWrappedResources(&g_pWrappedBackbufferResources[g_currentBackBufferIndex], 1);
     }
-    SAFE_RELEASE(hpBackBuffer);
-
-    // create depth buffer
-    D3D11_TEXTURE2D_DESC depthBufferDesc;
-    ZeroMemory(&depthBufferDesc, sizeof(depthBufferDesc));
-    depthBufferDesc.Width = g_width;
-    depthBufferDesc.Height = g_height;
-    depthBufferDesc.MipLevels = 1;
-    depthBufferDesc.ArraySize = 1;
-    depthBufferDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-    depthBufferDesc.SampleDesc.Count = 1;
-    depthBufferDesc.SampleDesc.Quality = 0;
-    depthBufferDesc.Usage = D3D11_USAGE_DEFAULT;
-    depthBufferDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-    depthBufferDesc.CPUAccessFlags = 0;
-    depthBufferDesc.MiscFlags = 0;
-
-    g_pd3dDevice->CreateTexture2D(&depthBufferDesc, NULL, &g_pDepthStencilBuffer);
-    assert(g_pDepthStencilBuffer);
 
     D3D11_DEPTH_STENCIL_VIEW_DESC depthStencilViewDesc;
     ZeroMemory(&depthStencilViewDesc, sizeof(depthStencilViewDesc));
@@ -1547,7 +1626,7 @@ updateRenderTarget(HWND hWnd) {
     assert(g_pDepthStencilView);
 
     // set device context to the render target
-    g_pd3dDeviceContext->OMSetRenderTargets(1, &g_pSwapChainRTV, g_pDepthStencilView);
+    g_pd3dDeviceContext->OMSetRenderTargets(1, &g_pSwapChainRTVs[g_currentBackBufferIndex], g_pDepthStencilView);
 
     // init viewport
     D3D11_VIEWPORT vp;

@@ -26,6 +26,7 @@
 #include "../far/error.h"
 
 #include <d3d12.h>
+#include <d3d11on12.h>
 #include <d3d11_1.h>
 #include "d3dx12.h"
 #include <cassert>
@@ -96,6 +97,8 @@ D3D12VertexBuffer::GetNumVertices() const {
 
 CPUDescriptorHandle
 D3D12VertexBuffer::BindD3D12Buffer(D3D12CommandQueueContext* D3D12CommandQueueContext) {
+    ID3D11Resource *resourcesToRelease[] = { _d3d11Buffer };
+    D3D12CommandQueueContext->Get11on12Device()->ReleaseWrappedResources(resourcesToRelease, ARRAYSIZE(resourcesToRelease));
 
     return _uav;
 }
@@ -108,25 +111,8 @@ D3D12VertexBuffer::BindD3D12UAV(D3D12CommandQueueContext* D3D12CommandQueueConte
 
 ID3D11Buffer *D3D12VertexBuffer::BindVBO(D3D12CommandQueueContext *D3D12CommandQueueContext)
 {
-    ScopedCommandListAllocatorPair pair(D3D12CommandQueueContext, D3D12CommandQueueContext->GetCommandListAllocatorPair());
-    ID3D12GraphicsCommandList *pCommandList = pair._commandList;
-    
-    pCommandList->CopyBufferRegion(_readbackBuffer, 0, _buffer, 0, _dataSize);
-    pCommandList->Close();
-
-    D3D12CommandQueueContext->ExecuteCommandList(pCommandList);
-    D3D12CommandQueueContext->Syncronize();
-
-    void *pReadbackData;
-    D3D12_RANGE readRange = { 0, (SIZE_T)_dataSize };
-    _readbackBuffer->Map(0, &readRange, &pReadbackData);
-
-    D3D11_MAPPED_SUBRESOURCE mappedSubresource;
-    D3D12CommandQueueContext->GetDeviceContext()->Map(_d3d11Buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedSubresource);
-    memcpy(mappedSubresource.pData, pReadbackData, _dataSize);
-
-    D3D12CommandQueueContext->GetDeviceContext()->Unmap(_d3d11Buffer, 0);
-    _readbackBuffer->Unmap(0, nullptr);
+    ID3D11Resource *resourcesToAcquire[] = { _d3d11Buffer };
+    D3D12CommandQueueContext->Get11on12Device()->AcquireWrappedResources(resourcesToAcquire, ARRAYSIZE(resourcesToAcquire));
 
     return _d3d11Buffer;
 }
@@ -149,21 +135,13 @@ D3D12VertexBuffer::allocate(D3D12CommandQueueContext* D3D12CommandQueueContext) 
     createCpuWritableBuffer(_dataSize, D3D12CommandQueueContext, _uploadBuffer);
 
     {
-        createCpuReadableBuffer(_dataSize, D3D12CommandQueueContext, _readbackBuffer);
+        ID3D11On12Device* d3d11on12Device = D3D12CommandQueueContext->Get11on12Device();
 
-        ID3D11DeviceContext *pD3D11Context = D3D12CommandQueueContext->GetDeviceContext();
+        D3D11_RESOURCE_FLAGS d3d11Flags = {};
+        d3d11Flags.BindFlags = D3D11_BIND_VERTEX_BUFFER | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+        d3d11Flags.StructureByteStride = sizeof(float);
 
-        CComPtr<ID3D11Device> pDevice;
-        pD3D11Context->GetDevice(&pDevice);
-
-        D3D11_BUFFER_DESC desc;
-        desc.BindFlags = D3D11_BIND_VERTEX_BUFFER | D3D11_BIND_SHADER_RESOURCE;
-        desc.ByteWidth = _numElements * _numVertices * sizeof(float);
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        desc.MiscFlags = 0;
-        desc.StructureByteStride = sizeof(float);
-        desc.Usage = D3D11_USAGE_DYNAMIC;
-        ThrowFailure(pDevice->CreateBuffer(&desc, nullptr, &_d3d11Buffer));
+        d3d11on12Device->CreateWrappedResource(_buffer, &d3d11Flags, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON, IID_PPV_ARGS(&_d3d11Buffer));
     }
 
     _uav = AllocateUAV(D3D12CommandQueueContext, _buffer, DXGI_FORMAT_R32_FLOAT, _numElements * _numVertices);

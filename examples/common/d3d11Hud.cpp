@@ -68,7 +68,7 @@ D3D11hud::D3D11hud(ID3D11DeviceContext *deviceContext)
     : _deviceContext(deviceContext),
       _vbo(0), _staticVbo(0), _fontTexture(0), _inputLayout(0),
       _shaderResourceView(0), _samplerState(0), _vertexShader(0),
-      _pixelShader(0), _rasterizerState(0)
+      _pixelShader(0), _rasterizerState(0), _vboBufferSize(0)
 {
 }
 
@@ -226,25 +226,31 @@ D3D11hud::Flush()
         return false;
 
     // update dynamic text
-    D3D11_BUFFER_DESC bufferDesc;
-    bufferDesc.ByteWidth = (int)getVboSource().size() * sizeof(float);
-    bufferDesc.Usage = D3D11_USAGE_DEFAULT;
-    bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    bufferDesc.CPUAccessFlags = 0;
-    bufferDesc.MiscFlags = 0;
-    bufferDesc.StructureByteStride = 4*sizeof(float);
+    static int vboSourceSizeInBytes = (int)(getVboSource().size() * sizeof(float));
+    if (_vbo == nullptr || _vboBufferSize < vboSourceSizeInBytes)
+    {
+        _vboBufferSize = vboSourceSizeInBytes;
 
-    D3D11_SUBRESOURCE_DATA subData;
-    subData.pSysMem = &getVboSource()[0];
-    subData.SysMemPitch = 0;
-    subData.SysMemSlicePitch = 0;
+        D3D11_BUFFER_DESC bufferDesc;
+        bufferDesc.ByteWidth = vboSourceSizeInBytes;
+        bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+        bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        bufferDesc.MiscFlags = 0;
+        bufferDesc.StructureByteStride = 4 * sizeof(float);
 
-    SAFE_RELEASE(_vbo);
+        SAFE_RELEASE(_vbo);
 
-    ID3D11Device *device = NULL;
-    _deviceContext->GetDevice(&device);
-    HRESULT hr = device->CreateBuffer(&bufferDesc, &subData, &_vbo);
+        ID3D11Device *device = NULL;
+        _deviceContext->GetDevice(&device);
+        HRESULT hr = device->CreateBuffer(&bufferDesc, nullptr, &_vbo);
+    }
     assert(_vbo);
+    D3D11_MAPPED_SUBRESOURCE MappedVBO;
+    _deviceContext->Map(_vbo, 0, D3D11_MAP_WRITE_DISCARD, 0, &MappedVBO);
+    memcpy(MappedVBO.pData, &getVboSource()[0], getVboSource().size() * sizeof(float));
+    _deviceContext->Unmap(_vbo, 0);
+
     int numVertices = (int)getVboSource().size()/7;  /* (x, y, r, g, b, u, v) = 7*/
 
     // reserved space of the vector remains for the next frame.

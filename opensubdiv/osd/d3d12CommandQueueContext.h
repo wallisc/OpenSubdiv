@@ -35,6 +35,7 @@ struct ID3D12CommandQueue;
 struct ID3D12GraphicsCommandList;
 struct ID3D12CommandAllocator;
 struct ID3D12Object;
+struct ID3D11On12Device;
 struct ID3D11DeviceContext;
 struct ID3D12Device;
 struct ID3D12CommandList;
@@ -75,14 +76,16 @@ namespace Osd {
     class D3D12CommandQueueContext
     {
     public:
-        D3D12CommandQueueContext(ID3D12CommandQueue *commandQueue, ID3D12Device *device, unsigned int nodeMask, ID3D11DeviceContext *D3D12CommandQueueContext11);
+        D3D12CommandQueueContext(ID3D12CommandQueue *commandQueue, ID3D12Device *device, unsigned int nodeMask, ID3D11DeviceContext *deviceContext, ID3D11On12Device *D3D11on12Device);
         ~D3D12CommandQueueContext();
 
-        ID3D11DeviceContext *_D3D12CommandQueueContext11;
+        ID3D11On12Device* _D3D11on12Device;
+        ID3D11DeviceContext* _D3D11Context;
 
         unsigned int GetNodeMask() { return _nodeMask; }
 
-        ID3D11DeviceContext *GetDeviceContext() { return _D3D12CommandQueueContext11; }
+        ID3D11On12Device *Get11on12Device() { return _D3D11on12Device; }
+        ID3D11DeviceContext *GetDeviceContext() { return _D3D11Context; }
 
         CommandListAllocatorPair GetCommandListAllocatorPair();
 
@@ -119,7 +122,7 @@ namespace Osd {
     };
 
 
-    D3D12CommandQueueContext *CreateD3D12CommandQueueContext(ID3D12CommandQueue *pCommandQueue, unsigned int nodeMask, ID3D11DeviceContext *D3D12CommandQueueContext);
+    D3D12CommandQueueContext *CreateD3D12CommandQueueContext(ID3D12CommandQueue *pCommandQueue, unsigned int nodeMask, ID3D11DeviceContext *deviceContext, ID3D11On12Device *d3d11on12Device);
     void FreeD3D12CommandQueueContext(D3D12CommandQueueContext *D3D12CommandQueueContext);
 }  // end namespace Osd
 

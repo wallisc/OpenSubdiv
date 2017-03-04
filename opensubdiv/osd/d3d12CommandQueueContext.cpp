@@ -75,12 +75,13 @@ void D3D12DeferredDeletionQueue::DeleteObject(ID3D12Object **object)
     (*object)->Release();
 }
 
-D3D12CommandQueueContext::D3D12CommandQueueContext(ID3D12CommandQueue *commandQueue, ID3D12Device *device, unsigned int nodeMask, ID3D11DeviceContext *D3D12CommandQueueContext11) :
+D3D12CommandQueueContext::D3D12CommandQueueContext(ID3D12CommandQueue *commandQueue, ID3D12Device *device, unsigned int nodeMask, ID3D11DeviceContext *deviceContext, ID3D11On12Device *D3D11on12Device) :
     _queue(commandQueue),
     _device(device),
+    _D3D11Context(deviceContext),
     _descriptorHeapManager(device, nodeMask),
     _commandListAllocator(CommandListAllocatorPairAllocator(device, nodeMask)),
-    _D3D12CommandQueueContext11(D3D12CommandQueueContext11),
+    _D3D11on12Device(D3D11on12Device),
     _nodeMask(nodeMask),
     _fenceValue(0)
 {
@@ -147,11 +148,11 @@ void D3D12CommandQueueContext::NotifyOnCommandListSubmission()
 }
 
 
-D3D12CommandQueueContext *CreateD3D12CommandQueueContext(ID3D12CommandQueue *commandQueue, unsigned int nodeMask, ID3D11DeviceContext *pD3D11Context)
+D3D12CommandQueueContext *CreateD3D12CommandQueueContext(ID3D12CommandQueue *commandQueue, unsigned int nodeMask, ID3D11DeviceContext *deviceContext, ID3D11On12Device *pD3D11on12Device)
 {
     CComPtr<ID3D12Device> device;
     commandQueue->GetDevice(IID_PPV_ARGS(&device));
-    return new D3D12CommandQueueContext(commandQueue, device, nodeMask, pD3D11Context);
+    return new D3D12CommandQueueContext(commandQueue, device, nodeMask, deviceContext, pD3D11on12Device);
 }
 
 void FreeD3D12CommandQueueContext(D3D12CommandQueueContext *D3D12CommandQueueContext)
