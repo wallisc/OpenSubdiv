@@ -317,7 +317,6 @@ set(D3D12_PUBLIC_HEADERS
     d3d12PoolAllocator.h
     d3d12util.h
     d3d12computeevaluator.h
-    d3d12LegacyGregoryPatchTable.h
     d3d12VertexBuffer.h
     d3dx12.h
 )
@@ -326,7 +325,6 @@ if ( DX12SDK_FOUND )
     list(APPEND GPU_SOURCE_FILES
         d3d12commandqueuecontext.cpp
         d3d12ComputeEvaluator.cpp
-        d3d12LegacyGregoryPatchTable.cpp
         d3d12VertexBuffer.cpp
         d3d12DescriptorHeapManager.cpp
     )

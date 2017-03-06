@@ -83,6 +83,7 @@ D3D11hud::~D3D11hud()
     SAFE_RELEASE(_vertexShader);
     SAFE_RELEASE(_pixelShader);
     SAFE_RELEASE(_rasterizerState);
+    SAFE_RELEASE(_constantBuffer);
 }
 
 void
@@ -187,6 +188,8 @@ D3D11hud::Init(int width, int height, int frameBufferWidth, int frameBufferHeigh
 
     device->CreateBuffer(&cbDesc, NULL, &_constantBuffer);
     assert(_constantBuffer);
+
+    SAFE_RELEASE(device);
 }
 
 void
@@ -216,6 +219,8 @@ D3D11hud::Rebuild(int width, int height, int framebufferWidth, int framebufferHe
         HRESULT hr = device->CreateBuffer(&bufferDesc, &subData, &_staticVbo);
         assert(_staticVbo);
         _staticVboCount = size / 7;
+
+        SAFE_RELEASE(device);
     }
 }
 
@@ -244,6 +249,8 @@ D3D11hud::Flush()
         ID3D11Device *device = NULL;
         _deviceContext->GetDevice(&device);
         HRESULT hr = device->CreateBuffer(&bufferDesc, nullptr, &_vbo);
+
+        SAFE_RELEASE(device);
     }
     assert(_vbo);
     D3D11_MAPPED_SUBRESOURCE MappedVBO;
