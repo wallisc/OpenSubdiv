@@ -72,27 +72,15 @@ OpenSubdiv::Osd::D3D11LegacyGregoryPatchTable *g_legacyGregoryPatchTable = NULL;
 #include <osd/d3d12util.h>
 #include <d3d12.h>
 #include <dxgi1_4.h>
-#include <DXGIDebug.h>
 
 #include <osd/d3d12VertexBuffer.h>
 #include <osd/d3d12ComputeEvaluator.h>
 
 #include <memory>
 
-GUID DXGI_DEBUG_ALL1 = { 0xe48ae283, 0xda80, 0x490b, 0x87, 0xe6, 0x43, 0xe9, 0xa9, 0xcf, 0xda, 0x8 };
-
 struct D3D12CommandQueueContextDeleter {
     void operator()(OpenSubdiv::Osd::D3D12CommandQueueContext *D3D12CommandQueueContext) {
         OpenSubdiv::Osd::FreeD3D12CommandQueueContext(D3D12CommandQueueContext);
-
-        static bool bCheckForD3DLeaks = false;
-        if (bCheckForD3DLeaks)
-        {
-            CComPtr<IDXGIDebug1> pDXGIDebug;
-            DXGIGetDebugInterface1(0, IID_PPV_ARGS(&pDXGIDebug));
-            pDXGIDebug->ReportLiveObjects(DXGI_DEBUG_ALL1, DXGI_DEBUG_RLO_ALL);
-
-        }
     }
 };
 
@@ -226,6 +214,7 @@ IDXGISwapChain1 * g_pSwapChain = NULL;
 
 UINT g_currentBackBufferIndex = 0;
 const UINT g_backBufferCount = 2;
+const DXGI_FORMAT g_backBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
 ID3D11RenderTargetView * g_pSwapChainRTVs[g_backBufferCount] = {};
 ID3D11Resource *g_pWrappedBackbufferResources[g_backBufferCount] = {};
 
@@ -318,13 +307,7 @@ getKernelName(int kernel) {
 
 static bool needs11on12ForDX11Interop(int kernel)
 {
-    switch (kernel)
-    {
-    case kDirect3D12:
-        return true;
-    default:
-        return false;
-    }
+	return kernel == kDirect3D12;
 }
 
 static bool initD3D11(HWND hWnd);
@@ -1329,24 +1312,24 @@ initHUD() {
     int compute_pulldown = g_hud->AddPullDown("Compute (K)", 475, 10, 300, callbackKernel, 'K');
     g_hud->AddPullDownButton(compute_pulldown, "CPU", kCPU, g_kernel == kCPU);
 #ifdef OPENSUBDIV_HAS_OPENMP
-    g_hud->AddPullDownButton(compute_pulldown, "OpenMP", kOPENMP);
+    g_hud->AddPullDownButton(compute_pulldown, "OpenMP", kOPENMP, g_kernel == kOPENMP);
 #endif
 #ifdef OPENSUBDIV_HAS_TBB
-    g_hud->AddPullDownButton(compute_pulldown, "TBB", kTBB);
+    g_hud->AddPullDownButton(compute_pulldown, "TBB", kTBB, g_kernel == kTBB);
 #endif
 #ifdef OPENSUBDIV_HAS_CUDA
-    g_hud->AddPullDownButton(compute_pulldown, "CUDA", kCUDA);
+    g_hud->AddPullDownButton(compute_pulldown, "CUDA", kCUDA, g_kernel == kCUDA);
 #endif
 #ifdef OPENSUBDIV_HAS_OPENCL_DX_INTEROP
     if (CLDeviceContext::HAS_CL_VERSION_1_1()) {
-        g_hud->AddPullDownButton(compute_pulldown, "OpenCL", kCL);
+        g_hud->AddPullDownButton(compute_pulldown, "OpenCL", kCL, g_kernel == kCL);
     }
 #endif
 #ifdef OPENSUBDIV_HAS_DX12
     g_hud->AddPullDownButton(compute_pulldown, "Direct3D12", kDirect3D12, g_kernel == kDirect3D12);
 #endif
 
-    g_hud->AddPullDownButton(compute_pulldown, "HLSL Compute", kDirectCompute);
+    g_hud->AddPullDownButton(compute_pulldown, "HLSL Compute", kDirectCompute, g_kernel == kDirectCompute);
 
     int displaystyle_pulldown = g_hud->AddPullDown("DisplayStyle (W)", 200, 10, 250,
                                                    callbackDisplayStyle, 'W');
@@ -1434,6 +1417,20 @@ initHUD() {
     callbackModel(g_currentShape);
 }
 
+DXGI_FORMAT ConvertToNonSRGB(DXGI_FORMAT format) {
+    switch (format)
+    {
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:   
+		return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:   
+		return DXGI_FORMAT_B8G8R8A8_UNORM;
+    case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:   
+		return DXGI_FORMAT_B8G8R8X8_UNORM;
+    default:                                
+		return format;
+    }
+}
+
 //------------------------------------------------------------------------------
 static bool
 initD3D11(HWND hWnd) {
@@ -1449,7 +1446,7 @@ initD3D11(HWND hWnd) {
     DXGI_SWAP_CHAIN_DESC1 hDXGISwapChainDesc = {};
     hDXGISwapChainDesc.Width = g_width;
     hDXGISwapChainDesc.Height = g_height;
-    hDXGISwapChainDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    hDXGISwapChainDesc.Format = ConvertToNonSRGB(g_backBufferFormat);
     hDXGISwapChainDesc.Scaling = DXGI_SCALING_NONE;
     hDXGISwapChainDesc.SampleDesc.Count = 1;
     hDXGISwapChainDesc.SampleDesc.Quality = 0;
@@ -1468,13 +1465,6 @@ initD3D11(HWND hWnd) {
 
         if (g_bUse11on12)
         {
-            ID3D12Debug *debugController;
-            if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
-            {
-                debugController->EnableDebugLayer();
-            }
-            debugController->Release();
-
             hr = D3D12CreateDevice(nullptr, hFeatureLevel, IID_PPV_ARGS(&g_pd3d12Device));
             if (FAILED(hr)) goto loopend;
 
@@ -1702,7 +1692,10 @@ updateRenderTarget(HWND hWnd) {
         }
 
         // create render target from the back buffer
-        if (FAILED(g_pd3dDevice->CreateRenderTargetView(hpBackBuffer, NULL, &g_pSwapChainRTVs[g_currentBackBufferIndex]))) {
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		rtvDesc.Format = g_backBufferFormat;
+        if (FAILED(g_pd3dDevice->CreateRenderTargetView(hpBackBuffer, &rtvDesc, &g_pSwapChainRTVs[g_currentBackBufferIndex]))) {
             MessageBoxW(hWnd, L"CreateRenderTargetView", L"Err", MB_ICONSTOP);
             return false;
         }
