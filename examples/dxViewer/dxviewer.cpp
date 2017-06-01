@@ -1074,6 +1074,22 @@ mouse(int button, int state, int x, int y) {
     }
 }
 
+static void Syncronize()
+{
+    g_pd3dDeviceContext->Flush();
+    {
+		IDXGIDevice2 *pDxgiDevice;
+		g_pd3dDevice->QueryInterface(&pDxgiDevice);
+
+		HANDLE Event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+		pDxgiDevice->EnqueueSetEvent(Event);
+		WaitForSingleObject(Event, INFINITE), static_cast<DWORD>(WAIT_OBJECT_0);
+
+		CloseHandle(Event);
+		SAFE_RELEASE(pDxgiDevice);
+    }
+}
+
 static void deleteAllObjects()
 {
     if (g_mesh)
@@ -1121,25 +1137,15 @@ static void deleteAllObjects()
 
     SAFE_RELEASE(g_pd3d12Device);
     SAFE_RELEASE(g_pd3dcommandQueue);
-    SAFE_RELEASE(g_pd3dcommandQueue);
-
     SAFE_RELEASE(g_pd3d11on12Device);
 
-    g_pd3dDeviceContext->ClearState();
-    g_pd3dDeviceContext->Flush();
+    Syncronize();
 
     SAFE_RELEASE(g_pSwapChain);
     SAFE_RELEASE(g_pd3dDeviceContext);
     SAFE_RELEASE(g_pd3dDevice);
 
     g_isSwapchainInitialized = false;
-
-    {
-        CComPtr<IDXGIDebug1> pDXGIDebug;
-        DXGIGetDebugInterface1(0, IID_PPV_ARGS(&pDXGIDebug));
-        pDXGIDebug->ReportLiveObjects(DXGI_DEBUG_ALL1, DXGI_DEBUG_RLO_ALL);
-
-    }
 }
 
 //-----------------------------------------------------------------------------
@@ -1498,7 +1504,7 @@ initD3D11(HWND hWnd) {
         }
         else
         {
-            hr = D3D11CreateDevice(nullptr, hDriverType, 0, D3D11_CREATE_DEVICE_DEBUG, &hFeatureLevel, 1, D3D11_SDK_VERSION, &g_pd3dDevice, nullptr, &g_pd3dDeviceContext);
+            hr = D3D11CreateDevice(nullptr, hDriverType, 0, 0, &hFeatureLevel, 1, D3D11_SDK_VERSION, &g_pd3dDevice, nullptr, &g_pd3dDeviceContext);
         }
         if (FAILED(hr)) goto loopend;
 
@@ -1613,7 +1619,20 @@ updateRenderTarget(HWND hWnd) {
         g_height = height;
 
         g_hud->Rebuild(g_width, g_height);
-        g_pSwapChain->ResizeBuffers(0, g_width, g_height, DXGI_FORMAT_UNKNOWN, 0);
+
+        Syncronize();
+		for (UINT i = 0; i < g_backBufferCount; i++)
+		{
+			SAFE_RELEASE(g_pSwapChainRTVs[i]);
+			SAFE_RELEASE(g_pWrappedBackbufferResources[i]);
+		}
+		g_currentBackBufferIndex = 0;
+
+		if (FAILED(g_pSwapChain->ResizeBuffers(0, g_width, g_height, DXGI_FORMAT_UNKNOWN, 0)))
+		{
+			MessageBoxW(hWnd, L"ResizeBuffers", L"Err", MB_ICONSTOP);
+			return false;
+		}
 
         // create depth buffer
         D3D11_TEXTURE2D_DESC depthBufferDesc;
@@ -1646,11 +1665,6 @@ updateRenderTarget(HWND hWnd) {
 
         g_pd3dDevice->CreateDepthStencilView(g_pDepthStencilBuffer, &depthStencilViewDesc, &g_pDepthStencilView);
         assert(g_pDepthStencilView);
-
-        for (auto &pRTV : g_pSwapChainRTVs)
-        {
-            SAFE_RELEASE(pRTV);
-        }
     }
 
 
@@ -1675,7 +1689,9 @@ updateRenderTarget(HWND hWnd) {
                 return false;
             }
             SAFE_RELEASE(hpBackBuffer12);
+
             hpBackBuffer = g_pWrappedBackbufferResources[g_currentBackBufferIndex];
+			hpBackBuffer->AddRef();
         }
         else
         {
@@ -1691,7 +1707,7 @@ updateRenderTarget(HWND hWnd) {
             return false;
         }
 
-        SAFE_RELEASE(hpBackBuffer);
+		SAFE_RELEASE(hpBackBuffer);
     }
 
     if (g_bUse11on12)
