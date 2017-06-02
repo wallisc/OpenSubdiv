@@ -7,5 +7,3 @@
 osdshim_wrap.cpp
 shim.py
 .DS_Store
-*.obj
-*.tlog
